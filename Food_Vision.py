@@ -4,6 +4,8 @@ from torch.utils.data import DataLoader
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from tqdm import tqdm
+import torchvision.models as models
 
 # 1. Getting the Data Ready
 # Define the transformations: Resize the image to 224x224 pixels (since this is a common size for image recognition models)
@@ -11,15 +13,15 @@ import torch.optim as optim
 transform = transforms.Compose([transforms.Resize((224,224)),
                                 transforms.ToTensor()])
 
-# Load the Food101 dataset using torchvision's ImageFolder utility.
+# Load the Food101 dataset using Torchvision's ImageFolder utility.
 # This assumes the dataset is organized in a directory structure where each subdirectory represents a class, and contains
 # images of that class. Replace 'path_to_food101' with the actual path to the Food101 dataset on your local machine.
-train_data = datasets.ImageFolder('path_to_food101/train', transform=transform)
-test_data = datasets.ImageFolder('path_to_food101/test', transform=transform)
+train_data = datasets.ImageFolder(r"C:\Users\Kashir\Desktop\Side_Projects\apple_pie_train", transform=transform)
+test_data = datasets.ImageFolder(r"C:\Users\Kashir\Desktop\Side_Projects\apple_pie_test", transform=transform)
 
 # Create data loaders to allow batch processing of these images
-train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
-test_loader = DataLoader(test_data, batch_size=64, shuffle=True)
+train_loader = DataLoader(train_data, batch_size=128, shuffle=True, drop_last=True)
+test_loader = DataLoader(test_data, batch_size=128, shuffle=True, drop_last=True)
 
 # 2. Building the Model
 # Define a custom neural network for classifying the food images. The network uses three convolutional layers for feature extraction,
@@ -32,7 +34,7 @@ class FoodNet(nn.Module):
         self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1)
         self.conv3 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)
         # Define the fully connected layers
-        self.fc1 = nn.Linear(64 * 28 * 28, 512)
+        self.fc1 = nn.Linear(64 * 7 * 7, 512)
         self.fc2 = nn.Linear(512, 101) # 101 classes in Food101
 
     def forward(self, x):
@@ -43,14 +45,18 @@ class FoodNet(nn.Module):
         x = F.max_pool2d(x, 2, 2)
         x = F.relu(self.conv3(x))
         # Flatten the output of the convolutional layers
-        x = x.view(-1, 64 * 28 * 28)
+        x = x.view(-1, 64 * 7 * 7)
         # Pass the flattened output through the fully connected layers with ReLU activation on the first
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
         return x
 
 # Instantiate the model
+
 model = FoodNet()
+
+# Use GPU if available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 3. Fitting the Model to the Data
 # Define the loss function (CrossEntropyLoss is commonly used for classification problems)
@@ -58,13 +64,15 @@ criterion = nn.CrossEntropyLoss()
 # Define the optimizer (Stochastic Gradient Descent in this case)
 optimizer = optim.SGD(model.parameters(), lr=0.01)
 
+accumulation_steps = 4  # Adjust as needed
+
 # Define the training loop
 def train(model, train_loader, criterion, optimizer):
     # Loop over the dataset multiple times
     for epoch in range(10):
         running_loss = 0.0
         # Iterate over the data in the DataLoader
-        for i, data in enumerate(train_loader, 0):
+        for i, data in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}")):
             # get the inputs; data is a list of [inputs, labels]
             inputs, labels = data
 
@@ -73,9 +81,15 @@ def train(model, train_loader, criterion, optimizer):
 
             # forward + backward + optimize
             outputs = model(inputs)
+
+            # Print the size of outputs
             loss = criterion(outputs, labels)
             loss.backward()
-            optimizer.step()
+
+            # Only step the optimizer every accumulation_steps
+            if (i + 1) % accumulation_steps == 0:
+                optimizer.step()
+                optimizer.zero_grad()
 
             # print statistics
             running_loss += loss.item()
@@ -92,7 +106,7 @@ def test(model, test_loader):
     total = 0
     # No need to track gradients for testing, so wrap in no_grad()
     with torch.no_grad():
-        for data in test_loader:
+        for data in tqdm(test_loader, desc = "Testing"):
             images, labels = data
             outputs = model(images)
             _, predicted = torch.max(outputs.data, 1)
